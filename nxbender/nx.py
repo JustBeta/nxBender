@@ -5,6 +5,7 @@ from . import ppp
 import pyroute2
 import ipaddress
 import atexit
+import os
 
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.poolmanager import PoolManager
@@ -50,6 +51,9 @@ class NXSession(object):
 
         logging.info("Starting session...")
         self.start_session()
+
+        logging.info("Update remote DNS...")
+        self.dns_tunnel()
 
         logging.info("Dialing up tunnel...")
         self.tunnel()
@@ -103,6 +107,8 @@ class NXSession(object):
 
         srv_options = {}
         routes = []
+        nameservers = []
+        searchs = []
 
         # Very dodgily avoid actually parsing the HTML
         for line in resp.iter_lines():
@@ -119,6 +125,12 @@ class NXSession(object):
 
             if key == 'Route':
                 routes.append(value)
+            elif key == 'dns1':
+                nameservers.append(value)
+            elif key == 'dns2':
+                nameservers.append(value)
+            elif key == 'dnsSuffixes':
+                searchs.append(value)
             elif key not in srv_options:
                 srv_options[key] = value
             else:
@@ -128,6 +140,48 @@ class NXSession(object):
 
         self.srv_options = srv_options
         self.routes = routes
+        self.nameservers = nameservers
+        self.searchs = searchs
+
+    def dns_tunnel(self):
+        """
+        Apply remote DNS
+        """
+        resolv = '/etc/resolv.conf'
+        
+        # lit le fichier resolv.conf
+        refile = open(resolv,'r')
+        resolvbak = refile.read()
+        refile.close()
+        
+        # ecrit le fichier resolv.conf.bak
+        refile = open(resolv + '.bak','w')
+        refile.write(resolvbak)
+        refile.close()
+        
+        # vide le fichier resolv.conf
+        refile = open(resolv,'w')
+        refile.write('')
+        refile.close()
+
+        # ecrit le nouveau fichier resolv.conf
+        refile = open(resolv,'a')
+        for nameserver in set(self.nameservers):
+            refile.writelines('nameserver %s\n' % (nameserver))
+            logging.debug("nameserver '%s' " % (nameserver))
+
+        refile.writelines('# DNS requests are forwarded to the host. DHCP DNS options are ignored.\n')
+        # refile.writelines('nameserver 192.168.65.5\n\n')
+        refile.writelines(resolvbak)
+        refile.writelines('\n')
+
+        refile.writelines('search ')
+        for search in set(self.searchs):
+            refile.writelines(search + ' ')
+
+        refile.writelines('\n')
+        refile.close()
+        logging.info("Remote DNS configured.")
 
     def tunnel(self):
         """
@@ -146,6 +200,21 @@ class NXSession(object):
 
         pppd = ppp.PPPSession(self.options, auth_key, routecallback=self.setup_routes)
         pppd.run()
+
+        resolv = '/etc/resolv.conf'
+        
+        # lit le fichier resolv.conf.bak
+        refile = open(resolv + '.bak','r')
+        resolvorg = refile.read()
+        refile.close()
+        
+        # ecrit le fichier resolv.conf
+        refile = open(resolv,'w')
+        refile.write(resolvorg)
+        refile.close()
+
+        # efface le fichier resolv.conf.bak
+        os.remove(resolv + '.bak')
 
     def setup_routes(self, gateway):
         ip = pyroute2.IPRoute()
