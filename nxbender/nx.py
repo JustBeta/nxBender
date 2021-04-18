@@ -170,8 +170,6 @@ class NXSession(object):
             refile.writelines('nameserver %s\n' % (nameserver))
             logging.debug("nameserver '%s' " % (nameserver))
 
-        refile.writelines('# DNS requests are forwarded to the host. DHCP DNS options are ignored.\n')
-        # refile.writelines('nameserver 192.168.65.5\n\n')
         refile.writelines(resolvbak)
         refile.writelines('\n')
 
